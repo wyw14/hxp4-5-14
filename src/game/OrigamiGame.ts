@@ -342,6 +342,12 @@ export class OrigamiGame {
         htmlCard.classList.add('correct');
       }
     });
+
+    this.modelViewers.forEach(viewer => {
+      if (viewer.getModelId() === correctId) {
+        viewer.setCorrect(true);
+      }
+    });
   }
 
   private resetFolds(): void {
@@ -351,7 +357,10 @@ export class OrigamiGame {
     this.state.gameStatus = 'playing';
     this.state.selectedModelId = null;
 
-    this.modelViewers.forEach(viewer => viewer.setSelected(false));
+    this.modelViewers.forEach(viewer => {
+      viewer.setSelected(false);
+      viewer.setCorrect(false);
+    });
     this.container.querySelectorAll('.model-card').forEach(card => {
       card.classList.remove('selected', 'correct');
     });

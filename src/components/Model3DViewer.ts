@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { themeManager, type Theme, type ThreeColorConfig } from '../theme/ThemeManager';
 
 export class Model3DViewer {
   private container: HTMLElement;
@@ -13,11 +14,19 @@ export class Model3DViewer {
   private resizeObserver: ResizeObserver;
   private disposed = false;
 
+  private ambientLight: THREE.AmbientLight | null = null;
+  private directionalLight: THREE.DirectionalLight | null = null;
+  private pointLight: THREE.PointLight | null = null;
+  private gridHelper: THREE.GridHelper | null = null;
+
+  private isSelected = false;
+  private isCorrect = false;
+  private unsubscribeTheme: (() => void) | null = null;
+
   constructor(container: HTMLElement) {
     this.container = container;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0xf5f5f5);
 
     const width = container.clientWidth || 200;
     const height = container.clientHeight || 200;
@@ -39,6 +48,7 @@ export class Model3DViewer {
 
     this.addLights();
     this.addGridHelper();
+    this.applyThemeColors(themeManager.getThreeColors());
 
     this.animate();
 
@@ -46,39 +56,98 @@ export class Model3DViewer {
       this.onResize();
     });
     this.resizeObserver.observe(container);
+
+    this.unsubscribeTheme = themeManager.subscribe((theme: Theme) => {
+      this.applyThemeColors(theme.threeColors);
+      this.refreshHighlightState();
+    });
   }
 
   private addLights(): void {
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-    this.scene.add(ambientLight);
+    this.ambientLight = new THREE.AmbientLight();
+    this.scene.add(this.ambientLight);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(5, 10, 7);
-    directionalLight.castShadow = true;
-    directionalLight.shadow.mapSize.width = 1024;
-    directionalLight.shadow.mapSize.height = 1024;
-    this.scene.add(directionalLight);
+    this.directionalLight = new THREE.DirectionalLight();
+    this.directionalLight.position.set(5, 10, 7);
+    this.directionalLight.castShadow = true;
+    this.directionalLight.shadow.mapSize.width = 1024;
+    this.directionalLight.shadow.mapSize.height = 1024;
+    this.scene.add(this.directionalLight);
 
-    const pointLight = new THREE.PointLight(0xffaa66, 0.4);
-    pointLight.position.set(-3, 2, -3);
-    this.scene.add(pointLight);
+    this.pointLight = new THREE.PointLight();
+    this.pointLight.position.set(-3, 2, -3);
+    this.scene.add(this.pointLight);
   }
 
   private addGridHelper(): void {
-    const gridHelper = new THREE.GridHelper(10, 10, 0xcccccc, 0xe0e0e0);
-    gridHelper.position.y = -1.5;
-    this.scene.add(gridHelper);
+    this.gridHelper = new THREE.GridHelper(10, 10);
+    this.gridHelper.position.y = -1.5;
+    this.scene.add(this.gridHelper);
+  }
+
+  private applyThemeColors(colors: ThreeColorConfig): void {
+    this.scene.background = new THREE.Color(colors.sceneBackground);
+
+    if (this.ambientLight) {
+      this.ambientLight.color.setHex(colors.ambientLight);
+      this.ambientLight.intensity = colors.ambientIntensity;
+    }
+    if (this.directionalLight) {
+      this.directionalLight.color.setHex(colors.directionalLight);
+      this.directionalLight.intensity = colors.directionalIntensity;
+    }
+    if (this.pointLight) {
+      this.pointLight.color.setHex(colors.pointLight);
+      this.pointLight.intensity = colors.pointIntensity;
+    }
+
+    if (this.gridHelper) {
+      const gridMat = this.gridHelper.material as unknown as THREE.LineBasicMaterial[];
+      if (gridMat[0]) {
+        gridMat[0].color.setHex(colors.gridLineColor);
+      }
+      if (gridMat[1]) {
+        gridMat[1].color.setHex(colors.gridFadeColor);
+      }
+    }
+
+    if (this.currentModel) {
+      this.updateModelColors(colors);
+    }
+  }
+
+  private updateModelColors(colors: ThreeColorConfig): void {
+    if (!this.currentModel) return;
+
+    this.currentModel.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        const mat = child.material as THREE.MeshStandardMaterial;
+        mat.color.setHex(colors.paperColor);
+        mat.roughness = colors.paperRoughness;
+        mat.metalness = colors.paperMetalness;
+        if (!this.isSelected && !this.isCorrect) {
+          mat.emissive.setHex(0x000000);
+          mat.emissiveIntensity = 0;
+        }
+      } else if (child instanceof THREE.LineSegments) {
+        const mat = child.material as THREE.LineBasicMaterial;
+        mat.color.setHex(colors.paperEdgeColor);
+      }
+    });
   }
 
   loadModel(modelId: string): void {
     this.modelId = modelId;
+    this.isSelected = false;
+    this.isCorrect = false;
 
     if (this.currentModel) {
       this.scene.remove(this.currentModel);
       this.disposeModel(this.currentModel);
     }
 
-    this.currentModel = this.createModel(modelId);
+    const colors = themeManager.getThreeColors();
+    this.currentModel = this.createModel(modelId, colors);
     if (this.currentModel) {
       this.scene.add(this.currentModel);
     }
@@ -87,17 +156,19 @@ export class Model3DViewer {
     this.controls.reset();
   }
 
-  private createModel(modelId: string): THREE.Group {
+  private createModel(modelId: string, colors: ThreeColorConfig): THREE.Group {
     const group = new THREE.Group();
     const paperMaterial = new THREE.MeshStandardMaterial({
-      color: 0xfff8e7,
+      color: colors.paperColor,
       side: THREE.DoubleSide,
       flatShading: false,
-      roughness: 0.8,
-      metalness: 0.1
+      roughness: colors.paperRoughness,
+      metalness: colors.paperMetalness,
+      emissive: 0x000000,
+      emissiveIntensity: 0,
     });
 
-    const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xd4a574 });
+    const edgeMaterial = new THREE.LineBasicMaterial({ color: colors.paperEdgeColor });
 
     switch (modelId) {
       case 'rectangle-fold':
@@ -189,7 +260,7 @@ export class Model3DViewer {
     this.addEdges(geometry, edgeMat, group);
   }
 
-  private createSmallTriangle(group: THREE.Group, material: THREE.MeshStandardMaterial, _edgeMat: THREE.LineBasicMaterial): void {
+  private createSmallTriangle(group: THREE.Group, material: THREE.MeshStandardMaterial, edgeMat: THREE.LineBasicMaterial): void {
     for (let i = 0; i < 4; i++) {
       const shape = new THREE.Shape();
       shape.moveTo(0, 0);
@@ -206,9 +277,10 @@ export class Model3DViewer {
       mesh.position.y = i * 0.15;
       group.add(mesh);
     }
+    void edgeMat;
   }
 
-  private createSquareTwist(group: THREE.Group, material: THREE.MeshStandardMaterial, _edgeMat: THREE.LineBasicMaterial): void {
+  private createSquareTwist(group: THREE.Group, material: THREE.MeshStandardMaterial, edgeMat: THREE.LineBasicMaterial): void {
     const centerSize = 0.6;
 
     const centerShape = new THREE.Shape();
@@ -245,9 +317,10 @@ export class Model3DViewer {
       triMesh.rotation.z = corner.rotZ;
       group.add(triMesh);
     });
+    void edgeMat;
   }
 
-  private createCraneBase(group: THREE.Group, material: THREE.MeshStandardMaterial, _edgeMat: THREE.LineBasicMaterial): void {
+  private createCraneBase(group: THREE.Group, material: THREE.MeshStandardMaterial, edgeMat: THREE.LineBasicMaterial): void {
     const baseShape = new THREE.Shape();
     baseShape.moveTo(0, -1);
     baseShape.lineTo(1, 0);
@@ -288,6 +361,7 @@ export class Model3DViewer {
     topMesh.position.set(0, 0.6, -0.2);
     topMesh.rotation.x = -Math.PI / 3;
     group.add(topMesh);
+    void edgeMat;
   }
 
   private addEdges(geometry: THREE.BufferGeometry, material: THREE.LineBasicMaterial, group: THREE.Group): void {
@@ -337,21 +411,42 @@ export class Model3DViewer {
     this.renderer.setSize(width, height);
   }
 
-  setSelected(selected: boolean): void {
-    if (this.currentModel) {
-      this.currentModel.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          const mat = child.material as THREE.MeshStandardMaterial;
-          if (selected) {
-            mat.emissive = new THREE.Color(0x6699ff);
-            mat.emissiveIntensity = 0.3;
-          } else {
-            mat.emissive = new THREE.Color(0x000000);
-            mat.emissiveIntensity = 0;
-          }
-        }
-      });
+  private refreshHighlightState(): void {
+    const colors = themeManager.getThreeColors();
+    if (!this.currentModel) return;
+
+    let emissiveColor = 0x000000;
+    let emissiveIntensity = 0;
+
+    if (this.isCorrect) {
+      emissiveColor = colors.correctHighlight;
+      emissiveIntensity = colors.correctEmissiveIntensity;
+    } else if (this.isSelected) {
+      emissiveColor = colors.selectedHighlight;
+      emissiveIntensity = colors.selectedEmissiveIntensity;
     }
+
+    this.currentModel.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        const mat = child.material as THREE.MeshStandardMaterial;
+        mat.emissive.setHex(emissiveColor);
+        mat.emissiveIntensity = emissiveIntensity;
+      }
+    });
+  }
+
+  setSelected(selected: boolean): void {
+    if (this.isCorrect) return;
+    this.isSelected = selected;
+    this.refreshHighlightState();
+  }
+
+  setCorrect(correct: boolean): void {
+    this.isCorrect = correct;
+    if (correct) {
+      this.isSelected = false;
+    }
+    this.refreshHighlightState();
   }
 
   getModelId(): string {
@@ -361,6 +456,10 @@ export class Model3DViewer {
   destroy(): void {
     this.disposed = true;
     this.resizeObserver.disconnect();
+    if (this.unsubscribeTheme) {
+      this.unsubscribeTheme();
+      this.unsubscribeTheme = null;
+    }
 
     if (this.animationId) {
       cancelAnimationFrame(this.animationId);
