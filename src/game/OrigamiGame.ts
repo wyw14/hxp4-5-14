@@ -3,6 +3,7 @@ import { SeededRandom, generateSeed } from '../utils/random';
 import { OrigamiSVG } from '../components/OrigamiSVG';
 import { Model3DViewer } from '../components/Model3DViewer';
 import { FoldStateManager } from './FoldStateManager';
+import { themeManager } from '../theme/ThemeManager';
 
 export interface GameState {
   currentQuestion: Question | null;
@@ -50,23 +51,42 @@ export class OrigamiGame {
   }
 
   private initUI(): void {
+    const currentTheme = themeManager.getCurrentTheme();
+    const themes = themeManager.getAllThemes();
+    
+    const themeButtonsHtml = themes.map(theme => `
+      <button class="theme-btn ${theme.id === currentTheme.id ? 'active' : ''}" 
+              data-theme-id="${theme.id}" 
+              title="${theme.name}: ${theme.description}">
+        ${theme.icon}
+      </button>
+    `).join('');
+
     this.container.innerHTML = `
       <div class="game-container">
         <div class="game-header">
           <h1>🎯 3D 折纸挑战</h1>
-          <div class="game-stats">
-            <span class="stat-item">
-              <span class="stat-label">关卡</span>
-              <span class="stat-value" id="level-display">1</span>
-            </span>
-            <span class="stat-item">
-              <span class="stat-label">得分</span>
-              <span class="stat-value" id="score-display">0</span>
-            </span>
-            <span class="stat-item">
-              <span class="stat-label">步数</span>
-              <span class="stat-value" id="steps-display">0/0</span>
-            </span>
+          <div class="header-controls">
+            <div class="game-stats">
+              <span class="stat-item">
+                <span class="stat-label">关卡</span>
+                <span class="stat-value" id="level-display">1</span>
+              </span>
+              <span class="stat-item">
+                <span class="stat-label">得分</span>
+                <span class="stat-value" id="score-display">0</span>
+              </span>
+              <span class="stat-item">
+                <span class="stat-label">步数</span>
+                <span class="stat-value" id="steps-display">0/0</span>
+              </span>
+            </div>
+            <div class="theme-switcher">
+              <span class="theme-switcher-label">主题</span>
+              <div class="theme-buttons">
+                ${themeButtonsHtml}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -110,6 +130,25 @@ export class OrigamiGame {
     this.resetBtn?.addEventListener('click', () => this.resetFolds());
     this.hintBtn?.addEventListener('click', () => this.showHint());
     this.nextBtn?.addEventListener('click', () => this.nextQuestion());
+
+    this.container.querySelectorAll('.theme-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const target = e.currentTarget as HTMLElement;
+        const themeId = target.dataset.themeId;
+        if (themeId) {
+          this.switchTheme(themeId);
+        }
+      });
+    });
+  }
+
+  private switchTheme(themeId: string): void {
+    if (themeManager.setTheme(themeId)) {
+      this.container.querySelectorAll('.theme-btn').forEach(btn => {
+        const htmlBtn = btn as HTMLElement;
+        htmlBtn.classList.toggle('active', htmlBtn.dataset.themeId === themeId);
+      });
+    }
   }
 
   private startGame(): void {
